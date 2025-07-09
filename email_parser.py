@@ -1,13 +1,80 @@
 import re
 from bs4 import BeautifulSoup
 
-def parse_food_delivery_email(subject, body):
-    """
-    Parse food delivery emails and extract order info
-    Returns dict with restaurant, items, total, service
-    """
+def should_process_email(subject, body, sender):
+    """Enhanced filtering for DoorDash order confirmations"""
     
-    # Determine which service this is from
+    print(f"\n🔍 FILTERING EMAIL...")
+    print(f"   Subject: {subject}")
+    
+    # Must be from DoorDash (direct or forwarded)
+    is_doordash = (
+        "no-reply@doordash.com" in (sender or "") or
+        "doordash.com" in (sender or "") or
+        "no-reply@doordash.com" in body or
+        "DoorDash Order" in body or
+        ("doordash" in body.lower() and "forwarded message" in body.lower())
+    )
+    
+    if not is_doordash:
+        print("   ❌ Not from DoorDash")
+        return False
+    
+    # Must have order confirmation indicators
+    order_indicators = [
+        "Order Confirmation for", "Thanks for your order", "Total Charged",
+        "Your receipt", "Track Your Order"
+    ]
+    
+    found_indicators = [ind for ind in order_indicators if ind in body]
+    if not found_indicators:
+        print("   ❌ No order confirmation indicators")
+        return False
+    
+    # Must have financial indicators
+    financial_indicators = ["Total Charged", "Subtotal", "Delivery Fee", "Service Fee", "$"]
+    found_financial = [ind for ind in financial_indicators if ind in body]
+    if not found_financial:
+        print("   ❌ No financial indicators")
+        return False
+    
+    # Exclude non-order emails
+    exclusions = [
+        "login", "password", "reset", "verification", "promotional", "marketing",
+        "survey", "rate your", "we miss you", "special offer", "account", "security"
+    ]
+    
+    combined_text = (body + " " + subject).lower()
+    exclusions_found = [exc for exc in exclusions if exc in combined_text]
+    if exclusions_found:
+        print(f"   ❌ Contains exclusions: {exclusions_found}")
+        return False
+    
+    # Check for restaurant pattern
+    restaurant_found = bool(re.search(r"Order Confirmation for .+ from (.+)", body, re.IGNORECASE))
+    
+    # Final validation - need multiple strong indicators
+    strong_indicators = [
+        "Order Confirmation" in body,
+        "Total Charged" in body,
+        "Your receipt" in body,
+        "Track Your Order" in body,
+        "Delivery Fee" in body or "Service Fee" in body,
+        restaurant_found
+    ]
+    
+    strong_count = sum(strong_indicators)
+    print(f"   ✓ Strong indicators: {strong_count}/6")
+    
+    if strong_count >= 3:
+        print("   ✅ EMAIL PASSES FILTER")
+        return True
+    else:
+        print(f"   ❌ Not enough indicators ({strong_count}/6)")
+        return False
+
+def parse_food_delivery_email(subject, body):
+    """Parse food delivery emails"""
     service = detect_service(subject, body)
     
     if service == 'doordash':
@@ -18,10 +85,10 @@ def parse_food_delivery_email(subject, body):
         return None
 
 def detect_service(subject, body):
-    """Detect which delivery service the email is from"""
+    """Detect delivery service"""
     text = (subject + " " + body).lower()
     
-    if 'doordash' in text or 'door dash' in text:
+    if 'doordash' in text:
         return 'doordash'
     elif 'uber eats' in text or 'ubereats' in text:
         return 'ubereats'
@@ -31,61 +98,37 @@ def detect_service(subject, body):
     return None
 
 def parse_doordash_email(subject, body):
-    """Parse DoorDash order confirmation email"""
+    """Parse DoorDash order confirmation"""
     try:
-        # Use BeautifulSoup to parse HTML
         soup = BeautifulSoup(body, 'html.parser')
+        text_content = soup.get_text() if soup else body
         
-        # Get text content
-        if soup:
-            text_content = soup.get_text()
-        else:
-            text_content = body
-            
-        # Extract restaurant name - FIXED to remove "Apple Pay" etc
+        # Extract restaurant - check subject first (best for forwarded emails)
         restaurant = None
-        restaurant_patterns = [
-            r'Paid with.*?\n([A-Za-z\s&\']+)\nTotal:',  # Based on your receipt format
-            r'Paid with.*?([A-Za-z\s&\']+)\s*Total:',  # Alternative format
-            r'Your receipt\n.*?\n.*?- For (.+?) -',
-            r'order from ([^,\n]+)',
-            r'Thanks for your order[^A-Za-z]*([A-Za-z\s&\']+)\n',  # New pattern
-            r'Paid with [^A-Za-z]*([A-Za-z\s&\']+)(?:\s*Total|\s*\$)',  # More flexible
-        ]
+        subject_match = re.search(r'Order Confirmation for .+ from (.+)', subject, re.IGNORECASE)
+        if subject_match:
+            restaurant = subject_match.group(1).strip()
         
-        for pattern in restaurant_patterns:
-            match = re.search(pattern, text_content, re.IGNORECASE | re.DOTALL)
-            if match:
-                restaurant_candidate = match.group(1).strip()
-                
-                # Clean up common false matches - FIXED
-                restaurant_candidate = restaurant_candidate.replace('Apple Pay', '').strip()
-                restaurant_candidate = restaurant_candidate.replace('with', '').strip()
-                
-                # Validate candidate
-                if (restaurant_candidate and 
-                    not restaurant_candidate.startswith('Total') and 
-                    len(restaurant_candidate) < 50 and
-                    len(restaurant_candidate) > 2):
-                    restaurant = restaurant_candidate
-                    break
-        
-        # If HTML parsing fails, try plain text patterns
+        # Fallback to body patterns
         if not restaurant:
-            restaurant_patterns = [
-                r'Paid with.*?\n([A-Za-z\s&\']+)\n',
+            patterns = [
+                r'Paid with.*?\n([A-Za-z\s&\']+)\nTotal:',
+                r'Paid with.*?([A-Za-z\s&\']+)\s*Total:',
+                r'Thanks for your order[^A-Za-z]*([A-Za-z\s&\']+)\n',
                 r'order from ([^,\n]+)',
             ]
-            for pattern in restaurant_patterns:
-                match = re.search(pattern, body, re.IGNORECASE)
+            
+            for pattern in patterns:
+                match = re.search(pattern, text_content, re.IGNORECASE | re.DOTALL)
                 if match:
                     candidate = match.group(1).strip()
-                    candidate = candidate.replace('Apple Pay', '').strip()
-                    if candidate:
+                    candidate = re.sub(r'Apple Pay|Google Pay|with', '', candidate, flags=re.IGNORECASE).strip()
+                    
+                    if candidate and len(candidate) > 2 and len(candidate) < 50:
                         restaurant = candidate
                         break
         
-        # Extract total charged
+        # Extract total
         total = None
         total_patterns = [
             r'Total Charged\s*\$([0-9]+\.[0-9]{2})',
@@ -97,21 +140,18 @@ def parse_doordash_email(subject, body):
             if match:
                 total = float(match.group(1))
                 break
-
-        # REMOVED ALL DEBUG OUTPUT - just extract items silently
-        items = []
         
-        # Pattern for DoorDash items: "1x Diet Coke® (Beverages) • Large (0 Cal.) • No Ice (0 Cal.) $1.19"
+        # Extract items
+        items = []
         item_patterns = [
-            r'(\d+)x\s*([^•$\n]+?)(?:•[^$]*?)?\s*\$([0-9]+\.[0-9]{2})',  # Handle • separators
-            r'(\d+)x\s+([^$\n]+?)\s+\$([0-9]+\.[0-9]{2})',  # Original pattern
+            r'(\d+)x\s*([^•$\n]+?)(?:•[^$]*?)?\s*\$([0-9]+\.[0-9]{2})',
+            r'(\d+)x\s+([^$\n]+?)\s+\$([0-9]+\.[0-9]{2})',
         ]
         
         for pattern in item_patterns:
             matches = re.findall(pattern, text_content, re.MULTILINE)
             for match in matches:
                 item_name = match[1].strip()
-                # Clean up item name (remove extra details after parentheses)
                 item_name = re.sub(r'\s*\([^)]+\)\s*$', '', item_name).strip()
                 
                 items.append({
@@ -120,7 +160,6 @@ def parse_doordash_email(subject, body):
                     'price': float(match[2])
                 })
             
-            # If we found items with this pattern, don't try other patterns
             if items:
                 break
         
@@ -136,20 +175,20 @@ def parse_doordash_email(subject, body):
         return None
 
 def parse_ubereats_email(subject, body):
-    """Parse Uber Eats order confirmation email"""
+    """Parse Uber Eats order confirmation"""
     try:
         soup = BeautifulSoup(body, 'html.parser')
+        text_content = soup.get_text() if soup else body
         
-        # Extract restaurant name
+        # Extract restaurant
         restaurant = None
-        restaurant_patterns = [
+        patterns = [
             r'Your order from ([^,\n]+)',
             r'Thanks for ordering from ([^,\n]+)',
             r'Receipt for ([^,\n]+)',
         ]
         
-        text_content = soup.get_text() if soup else body
-        for pattern in restaurant_patterns:
+        for pattern in patterns:
             match = re.search(pattern, text_content, re.IGNORECASE)
             if match:
                 restaurant = match.group(1).strip()
@@ -169,7 +208,7 @@ def parse_ubereats_email(subject, body):
                 total = float(match.group(1))
                 break
         
-        # Extract items (Uber Eats format varies)
+        # Extract items
         items = []
         item_patterns = [
             r'(\d+)\s+x\s+([^$\n]+?)\s+\$([0-9]+\.[0-9]{2})',
@@ -195,28 +234,3 @@ def parse_ubereats_email(subject, body):
     except Exception as e:
         print(f"Error parsing Uber Eats email: {e}")
         return None
-
-# COMMENTED OUT - Uncomment to test locally
-# if __name__ == "__main__":
-#     print("=== TESTING WITH REAL DOORDASH EMAIL ===")
-#     
-#     try:
-#         with open('paste.txt', 'r', encoding='utf-8') as f:
-#             email_content = f.read()
-#         
-#         test_subject = "Thanks for your order, Kevin"
-#         result = parse_food_delivery_email(test_subject, email_content)
-#         
-#         if result:
-#             print("✓ Parsing succeeded!")
-#             print(f"Service: {result['service']}")
-#             print(f"Restaurant: {result['restaurant']}")
-#             print(f"Total: ${result['total']}")
-#             print(f"Items ({len(result['items'])}):")
-#             for item in result['items']:
-#                 print(f"  {item['quantity']}x {item['name']} - ${item['price']}")
-#         else:
-#             print("✗ Parsing failed")
-#             
-#     except Exception as e:
-#         print(f"Error: {e}")

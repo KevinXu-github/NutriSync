@@ -1,0 +1,17 @@
+{
+  "service": "doordash",
+  "restaurant": "Unknown Restaurant",
+  "total": 36.5,
+  "items": [
+    {
+      "quantity": 1,
+      "name": "- For: Kevin Xu -",
+      "price": 18.72
+    },
+    {
+      "quantity": 1,
+      "name": "Loaded Tiny Tacos",
+      "price": 6.24
+    }
+  ]
+}
