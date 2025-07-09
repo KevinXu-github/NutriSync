@@ -7,133 +7,111 @@ app = Flask(__name__)
 
 @app.route('/')
 def hello():
-    return "Food Tracker App - Email Webhook Ready"
+    return "🍔 NutriSync - DoorDash Order Parser"
 
 @app.route('/webhook/email', methods=['POST'])
 def handle_email():
-    """Enhanced email webhook handler that logs everything Mailgun sends"""
+    """Clean email webhook handler - essential output only"""
     
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     
-    print(f"\n=== EMAIL RECEIVED AT {timestamp} ===")
-    
-    # Log the content type
-    print(f"Content-Type: {request.content_type}")
-    
-    # Log all headers
-    print("\n--- HEADERS ---")
-    for header, value in request.headers:
-        print(f"{header}: {value}")
+    print(f"\n📧 EMAIL RECEIVED - {timestamp}")
     
     # Handle both JSON and form data
     email_data = {}
     
     if request.is_json:
-        print("\n--- JSON DATA ---")
         email_data = request.get_json()
-        # Save raw JSON
-        with open(f"mailgun_json_{timestamp}.json", 'w') as f:
-            json.dump(email_data, f, indent=2)
-        print(f"JSON data saved to mailgun_json_{timestamp}.json")
-        
-        # Log key fields
-        for key, value in email_data.items():
-            if key in ['body-html', 'body-plain', 'stripped-html', 'stripped-text']:
-                print(f"{key}: {len(str(value))} characters")
-                # Save full body content to file
-                filename = f"mailgun_{key}_{timestamp}.txt"
-                with open(filename, 'w', encoding='utf-8') as f:
-                    f.write(str(value))
-                print(f"  → Saved to {filename}")
-            else:
-                print(f"{key}: {value}")
     else:
-        print("\n--- FORM DATA ---")
-        for key, value in request.form.items():
-            email_data[key] = value
-            if key in ['body-html', 'body-plain', 'stripped-html', 'stripped-text']:
-                print(f"{key}: {len(value)} characters")
-                # Save full body content to file
-                filename = f"mailgun_{key}_{timestamp}.txt"
-                with open(filename, 'w', encoding='utf-8') as f:
-                    f.write(value)
-                print(f"  → Saved to {filename}")
-            else:
-                print(f"{key}: {value}")
+        email_data = dict(request.form)
     
-    # Log raw data if any
-    if request.data:
-        print(f"\n--- RAW DATA ---")
-        print(f"Raw data length: {len(request.data)}")
-        with open(f"mailgun_raw_{timestamp}.txt", 'wb') as f:
-            f.write(request.data)
+    # Get email data
+    subject = email_data.get('subject', '')
+    body = (email_data.get('stripped-html') or 
+            email_data.get('body-html') or 
+            email_data.get('stripped-text') or
+            email_data.get('body-plain', ''))
     
-    # Try to parse with our existing parser
-    print("\n--- PARSING ATTEMPT ---")
+    print(f"Subject: {subject}")
+    
+    # Quick DoorDash check
+    if 'doordash' not in (subject + body).lower():
+        print("⏭️  Not a DoorDash email, ignoring")
+        return jsonify({"status": "ignored", "reason": "Not DoorDash"})
+    
+    # Parse the order
     try:
         from email_parser import parse_food_delivery_email
         
-        # Get email data from both JSON and form formats
-        subject = email_data.get('subject', '')
-        # Try stripped-html first, then body-html, then plain text
-        body = (email_data.get('stripped-html') or 
-                email_data.get('body-html') or 
-                email_data.get('stripped-text') or
-                email_data.get('body-plain', ''))
-        
-        print(f"Subject: {subject}")
-        print(f"Body length: {len(body)}")
-        print(f"Body preview: {body[:200]}...")
-        
-        # Try parsing
         result = parse_food_delivery_email(subject, body)
         
         if result:
-            print("✓ Parsing SUCCESS!")
-            print(f"Service: {result['service']}")
-            print(f"Restaurant: {result['restaurant']}")
-            print(f"Total: ${result['total']}")
-            print(f"Items: {len(result['items'])}")
+            print(f"\n✅ ORDER PARSED SUCCESSFULLY!")
+            print(f"🏪 Restaurant: {result['restaurant']}")
+            print(f"💰 Total: ${result['total']}")
+            print(f"🍔 Items ({len(result['items'])}):")
             
-            # Save parsed result
-            with open(f"parsed_result_{timestamp}.json", 'w') as f:
+            for i, item in enumerate(result['items']):
+                print(f"   {i+1}. {item['quantity']}x {item['name']} - ${item['price']}")
+            
+            # Save successful parse (keep this for your records)
+            with open(f"order_{timestamp}.json", 'w') as f:
                 json.dump(result, f, indent=2)
-                
+            
+            # Try to log to MyFitnessPal (optional - will fail gracefully if not available)
+            try:
+                from myfitnesspal_logger import log_order_to_myfitnesspal
+                print("\n🍽️ Logging to MyFitnessPal...")
+                mfp_success = log_order_to_myfitnesspal(result)
+                if mfp_success:
+                    print("✅ MyFitnessPal logging successful")
+                else:
+                    print("⚠️ MyFitnessPal logging failed")
+            except Exception as e:
+                print(f"⚠️ MyFitnessPal not available: {e}")
+            
             return jsonify({
                 "status": "success",
-                "parsed": True,
                 "restaurant": result['restaurant'],
                 "total": result['total'],
-                "items_count": len(result['items'])
+                "items_count": len(result['items']),
+                "timestamp": timestamp
             })
         else:
-            print("✗ Parsing failed - not recognized as food delivery")
-            return jsonify({
-                "status": "ignored",
-                "parsed": False,
-                "reason": "Not a food delivery email"
-            })
+            print("❌ Could not parse DoorDash order")
+            return jsonify({"status": "failed", "reason": "Parsing failed"})
             
     except Exception as e:
-        print(f"✗ Parsing error: {e}")
-        return jsonify({
-            "status": "error",
-            "error": str(e)
-        }), 500
+        print(f"❌ Error: {e}")
+        return jsonify({"status": "error", "error": str(e)}), 500
 
 @app.route('/test')
 def test():
-    """Test endpoint to verify webhook is working"""
-    return jsonify({
-        "status": "webhook_ready",
-        "message": "Send emails to test parsing",
-        "timestamp": datetime.now().isoformat()
-    })
+    """Test with your local file"""
+    try:
+        with open('paste.txt', 'r', encoding='utf-8') as f:
+            body = f.read()
+        
+        subject = "Fwd: Order Confirmation for Kevin from McDonald's"
+        
+        from email_parser import parse_food_delivery_email
+        result = parse_food_delivery_email(subject, body)
+        
+        if result:
+            return jsonify({
+                "status": "success",
+                "message": "Local test successful",
+                "restaurant": result['restaurant'],
+                "total": result['total'],
+                "items": result['items']
+            })
+        else:
+            return jsonify({"status": "failed", "message": "Could not parse"})
+            
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)})
 
 if __name__ == '__main__':
-    print("Starting Flask app for Mailgun testing...")
-    print("Don't forget to:")
-    print("1. Run 'ngrok http 5000' in another terminal")
-    print("2. Configure Mailgun webhook with your ngrok URL")
-    print("3. Forward a DoorDash email to your Mailgun address")
+    print("🚀 Starting NutriSync DoorDash Parser...")
+    print("📧 Ready to receive emails at your Mailgun address")
     app.run(debug=True, host='0.0.0.0', port=5000)
