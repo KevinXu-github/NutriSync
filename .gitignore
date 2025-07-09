@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Flask
+instance/
+.webassets-cache
+
+# Email test files (temporary)
+mailgun_*.txt
+mailgun_*.json
+parsed_result_*.json
+
+# ngrok
+ngrok.exe
+ngrok
+
+# Environment variables (will contain API keys)
+.env
+config.py
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Large paste files
+paste.txt
+clean_doordash_email.txt
+real_doordash_email.txt
+sample_doordash_email.html
+
+# Test files
+test_*.py
