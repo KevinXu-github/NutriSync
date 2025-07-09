@@ -1,0 +1,27 @@
+{
+  "service": "doordash",
+  "restaurant": "Apple Pay  McDonald's",
+  "total": 17.71,
+  "items": [
+    {
+      "quantity": 1,
+      "name": "Diet Coke\u00ae",
+      "price": 1.19
+    },
+    {
+      "quantity": 1,
+      "name": "French Fries",
+      "price": 3.49
+    },
+    {
+      "quantity": 1,
+      "name": "McDouble",
+      "price": 2.69
+    },
+    {
+      "quantity": 1,
+      "name": "Spicy Crispy Chicken Sandwich",
+      "price": 5.29
+    }
+  ]
+}
